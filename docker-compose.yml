@@ -1,0 +1,86 @@
+services:
+  broker:
+    image: apache/kafka:latest
+    container_name: broker
+    hostname: broker
+    ports:
+      - "9092:9092"
+    expose:
+      - 19092
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: 'CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT'
+      KAFKA_ADVERTISED_LISTENERS: 'PLAINTEXT_HOST://localhost:9092,PLAINTEXT://broker:19092'
+      KAFKA_PROCESS_ROLES: 'broker,controller'
+      KAFKA_CONTROLLER_QUORUM_VOTERS: '1@broker:29093'
+      KAFKA_LISTENERS: 'CONTROLLER://:29093,PLAINTEXT_HOST://:9092,PLAINTEXT://:19092'
+      KAFKA_INTER_BROKER_LISTENER_NAME: 'PLAINTEXT'
+      KAFKA_CONTROLLER_LISTENER_NAMES: 'CONTROLLER'
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+#      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+#      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+#      KAFKA_LOG_DIRS: '/tmp/kraft-combined-logs'
+    healthcheck:
+      test:  nc -z localhost:9092 || exit -1
+      start_period: 15s
+      interval: 1s
+      timeout: 1s
+      retries: 30
+
+  # Setup topic
+  broker-setup:
+    init: true
+    image: apache/kafka:latest
+    container_name: broker-setup
+    entrypoint: "/bin/sh -c"
+    command: |
+      "
+      export PATH=$PATH:/opt/kafka/bin
+      echo -e "Creating topics: 'articles'"
+      kafka-topics.sh --bootstrap-server broker:19092 --create --if-not-exists --topic articles --partitions 4
+      
+      echo -e 'Successfully created the following topics'
+      kafka-topics.sh --bootstrap-server broker:19092 --list
+      "
+    depends_on:
+      broker:
+        condition: service_healthy
+
+  nginx:
+    image: nginx:stable-alpine3.19-slim
+    container_name: nginx
+    env_file: ".env"
+    environment:
+      #NYT_API_TOKEN
+      NGINX_ENVSUBST_TEMPLATE_DIR: "/etc/nginx/templates"
+      NGINX_ENVSUBST_TEMPLATE_SUFFIX: ".template"
+      NGINX_ENVSUBST_OUTPUT_DIR: "/etc/nginx"
+    ports:
+      - "8080:80"
+    volumes:
+      - nginx_cache:/data/nginx/cache
+      - nginx_config:/etc/nginx/templates
+    healthcheck:
+      test: nc -z 127.0.0.1:80 || exit -1
+      start_period: 1s
+      interval: 1s
+      timeout: 1s
+      retries: 30
+
+volumes:
+  nginx_cache:
+    name: nginx_cache
+    driver: local
+    driver_opts:
+      type: none
+      device: "./tmp/nginx/data"
+      o: bind
+
+  nginx_config:
+    name: nginx_config
+    driver: local
+    driver_opts:
+      type: none
+      device: "./tmp/nginx/templates"
+      o: bind
